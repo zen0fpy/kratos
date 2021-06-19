@@ -18,6 +18,7 @@ import (
 	"github.com/gorilla/mux"
 )
 
+// 这里是检验Server有没有实现TransportServer和Endpoint er接口
 var _ transport.Server = (*Server)(nil)
 var _ transport.Endpointer = (*Server)(nil)
 
@@ -81,6 +82,7 @@ func ResponseEncoder(en EncodeResponseFunc) ServerOption {
 }
 
 // ErrorEncoder with error encoder.
+// 为啥只有编码错误处理函数，而没有解码错误处理函数, 如果解码失败会怎么处理
 func ErrorEncoder(en EncodeErrorFunc) ServerOption {
 	return func(o *Server) {
 		o.ene = en
@@ -123,6 +125,7 @@ func NewServer(opts ...ServerOption) *Server {
 	}
 	srv.Server = &http.Server{Handler: srv}
 	srv.router = mux.NewRouter()
+	// 添加过滤器
 	srv.router.Use(srv.filter())
 	return srv
 }
@@ -152,12 +155,17 @@ func (s *Server) ServeHTTP(res http.ResponseWriter, req *http.Request) {
 	s.router.ServeHTTP(res, req)
 }
 
+// 请求过滤处理函数
 func (s *Server) filter() mux.MiddlewareFunc {
 	return func(next http.Handler) http.Handler {
+		// 左边next是经过路由器过滤链处理后新的http.Handler
 		next = FilterChain(s.filters...)(next)
 		return http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+			// 合并上下文, 超时取决最快那个
 			ctx, cancel := ic.Merge(req.Context(), s.ctx)
 			defer cancel()
+
+			// 如果server有设置超时，就用server的
 			if s.timeout > 0 {
 				ctx, cancel = context.WithTimeout(ctx, s.timeout)
 				defer cancel()
@@ -167,6 +175,7 @@ func (s *Server) filter() mux.MiddlewareFunc {
 				// /path/123 -> /path/{id}
 				pathTemplate, _ = route.GetPathTemplate()
 			}
+			// 构造传输层
 			tr := &Transport{
 				endpoint:     s.endpoint.String(),
 				operation:    pathTemplate,
@@ -174,11 +183,13 @@ func (s *Server) filter() mux.MiddlewareFunc {
 				request:      req,
 				pathTemplate: pathTemplate,
 			}
+			// 为啥还要设置一次?
 			if r := mux.CurrentRoute(req); r != nil {
 				if path, err := r.GetPathTemplate(); err == nil {
 					tr.operation = path
 				}
 			}
+			// 给http请求上下文，带上传输层基本信息，到后面会用到
 			ctx = transport.NewServerContext(ctx, tr)
 			next.ServeHTTP(w, req.WithContext(ctx))
 		})
@@ -188,6 +199,7 @@ func (s *Server) filter() mux.MiddlewareFunc {
 // Endpoint return a real address to registry endpoint.
 // examples:
 //   http://127.0.0.1:8000?isSecure=false
+// 只是在启动时候执行，而且只执行一次
 func (s *Server) Endpoint() (*url.URL, error) {
 	s.once.Do(func() {
 		lis, err := net.Listen(s.network, s.address)
@@ -195,6 +207,9 @@ func (s *Server) Endpoint() (*url.URL, error) {
 			s.err = err
 			return
 		}
+		// 前面已经监听address， 为啥这里还要获取addr
+		// address 和 addr 有啥不同的呢？
+		// addr是私有地址和端口, 内网通信
 		addr, err := host.Extract(s.address, lis)
 		if err != nil {
 			lis.Close()
@@ -212,9 +227,11 @@ func (s *Server) Endpoint() (*url.URL, error) {
 
 // Start start the HTTP server.
 func (s *Server) Start(ctx context.Context) error {
+	// 监听失败就返回
 	if _, err := s.Endpoint(); err != nil {
 		return err
 	}
+	// 什么时候注册到注册中心
 	s.ctx = ctx
 	s.log.Infof("[HTTP] server listening on: %s", s.lis.Addr().String())
 	if err := s.Serve(s.lis); !errors.Is(err, http.ErrServerClosed) {
@@ -226,5 +243,6 @@ func (s *Server) Start(ctx context.Context) error {
 // Stop stop the HTTP server.
 func (s *Server) Stop(ctx context.Context) error {
 	s.log.Info("[HTTP] server stopping")
+	// 这里不用传参ctx, 而是新建一个, 是怕还没有关闭，就超时退出?
 	return s.Shutdown(context.Background())
 }

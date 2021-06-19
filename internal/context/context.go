@@ -7,6 +7,7 @@ import (
 	"time"
 )
 
+// 合并上下文对象，为啥会有合并需求?
 type mergeCtx struct {
 	parent1, parent2 context.Context
 
@@ -27,6 +28,7 @@ func Merge(parent1, parent2 context.Context) (context.Context, context.CancelFun
 		done:     make(chan struct{}),
 		cancelCh: make(chan struct{}),
 	}
+	// 合并上下文，取决先完成和超时哪个
 	select {
 	case <-parent1.Done():
 		mc.finish(parent1.Err())
@@ -91,14 +93,18 @@ func (mc *mergeCtx) Err() error {
 }
 
 // Deadline implements context.Context.
+// 过期期限
 func (mc *mergeCtx) Deadline() (time.Time, bool) {
 	d1, ok1 := mc.parent1.Deadline()
 	d2, ok2 := mc.parent2.Deadline()
 	switch {
+	// 1没有设置，就用2
 	case !ok1:
 		return d2, ok2
+	// 2没有设置，就用1
 	case !ok2:
 		return d1, ok1
+	// 1比2早过期，就用1, 否则用2
 	case d1.Before(d2):
 		return d1, true
 	default:

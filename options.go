@@ -11,6 +11,7 @@ import (
 )
 
 // Option is an application option.
+// 函数类型选项，把其他选项添加到options
 type Option func(o *options)
 
 // options is an application options.

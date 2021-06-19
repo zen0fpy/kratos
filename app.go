@@ -17,6 +17,9 @@ import (
 )
 
 // App is an application components lifecycle manager
+// App 是应用组件生命周期管理器,
+// 包含options、上下文（管理，取消，关闭应用组件), 服务实例， 日志管理
+// options 一般包含退出，中断信号，用于生命周期管理
 type App struct {
 	opts     options
 	ctx      context.Context
@@ -48,11 +51,13 @@ func New(opts ...Option) *App {
 }
 
 // Run executes all OnStart hooks registered with the application's Lifecycle.
+// Run 执行已经注册应用生命周期的启动钩子, 不但是启动，
 func (a *App) Run() error {
 	instance, err := a.buildInstance()
 	if err != nil {
 		return err
 	}
+	// 上下文包含应用实例的基本信息
 	ctx := NewContext(a.ctx, AppInfo{
 		ID:        instance.ID,
 		Name:      instance.Name,
@@ -60,6 +65,7 @@ func (a *App) Run() error {
 		Metadata:  instance.Metadata,
 		Endpoints: instance.Endpoints,
 	})
+	// 并发控制
 	eg, ctx := errgroup.WithContext(ctx)
 	wg := sync.WaitGroup{}
 	for _, srv := range a.opts.servers {

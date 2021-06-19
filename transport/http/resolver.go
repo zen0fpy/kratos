@@ -10,6 +10,7 @@ import (
 )
 
 // Target is resolver target
+// 要解析目标
 type Target struct {
 	Scheme    string
 	Authority string
@@ -39,6 +40,7 @@ type resolver struct {
 	logger  *log.Helper
 }
 
+// 后台启动一个goroutine去获取service信息
 func newResolver(ctx context.Context, discovery registry.Discovery, target *Target) (*resolver, error) {
 	watcher, err := discovery.Watch(ctx, target.Endpoint)
 	if err != nil {

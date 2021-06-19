@@ -22,6 +22,7 @@ type EncodeResponseFunc func(http.ResponseWriter, *http.Request, interface{}) er
 // EncodeErrorFunc is encode error func.
 type EncodeErrorFunc func(http.ResponseWriter, *http.Request, error)
 
+// 默认请求解码器, 根据Content-Type来解码
 // DefaultRequestDecoder decodes the request body to object.
 func DefaultRequestDecoder(r *http.Request, v interface{}) error {
 	if codec, ok := CodecForRequest(r, "Content-Type"); ok {
@@ -40,6 +41,7 @@ func DefaultRequestDecoder(r *http.Request, v interface{}) error {
 	return nil
 }
 
+// 响应编码器, 根据Accept进行
 // DefaultResponseEncoder encodes the object to the HTTP response.
 func DefaultResponseEncoder(w http.ResponseWriter, r *http.Request, v interface{}) error {
 	codec, _ := CodecForRequest(r, "Accept")
@@ -77,6 +79,7 @@ func DefaultErrorEncoder(w http.ResponseWriter, r *http.Request, se error) {
 }
 
 // CodecForRequest get encoding.Codec via http.Request
+//获取请求编解码器
 func CodecForRequest(r *http.Request, name string) (encoding.Codec, bool) {
 	for _, accept := range r.Header[name] {
 		codec := encoding.GetCodec(httputil.ContentSubtype(accept))

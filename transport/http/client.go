@@ -19,31 +19,38 @@ import (
 	"github.com/go-kratos/kratos/v2/transport/http/balancer/random"
 )
 
+// Why 这样子设计？？？
+
 // DecodeErrorFunc is decode error func.
+// 客户端-响应解码器
 type DecodeErrorFunc func(ctx context.Context, res *http.Response) error
 
 // EncodeRequestFunc is request encode func.
+// 客户端-请求编码器
 type EncodeRequestFunc func(ctx context.Context, contentType string, in interface{}) (body []byte, err error)
 
 // DecodeResponseFunc is response decode func.
+// 客户端-响应解码器，带有输出对象
 type DecodeResponseFunc func(ctx context.Context, res *http.Response, out interface{}) error
 
 // ClientOption is HTTP client option.
 type ClientOption func(*clientOptions)
 
+// Why clientOptions是小写开头，而ServerOptions是大写开头
+// 是因为clientOptions没有被外面对象引用？正常也应该是小写，可以通过OptionFunc来设置
 // Client is an HTTP transport client.
 type clientOptions struct {
 	ctx          context.Context
-	timeout      time.Duration
-	endpoint     string
-	userAgent    string
-	encoder      EncodeRequestFunc
-	decoder      DecodeResponseFunc
-	errorDecoder DecodeErrorFunc
-	transport    http.RoundTripper
-	balancer     balancer.Balancer
-	discovery    registry.Discovery
-	middleware   []middleware.Middleware
+	timeout      time.Duration           // 超时时间？ (connect, write, read)
+	endpoint     string                  // 请求服务器的地址
+	userAgent    string                  // 设置用户请求-Agent
+	encoder      EncodeRequestFunc       // 请求编码器
+	decoder      DecodeResponseFunc      // 响应解码器
+	errorDecoder DecodeErrorFunc         // 响应解码器
+	transport    http.RoundTripper       // tcp传输层
+	balancer     balancer.Balancer       // 请求负载均衡
+	discovery    registry.Discovery      // 服务发现
+	middleware   []middleware.Middleware // 中间件
 }
 
 // WithTransport with client transport.
@@ -119,10 +126,11 @@ func WithBalancer(b balancer.Balancer) ClientOption {
 }
 
 // Client is an HTTP client.
+// 封装http client的客户端对象
 type Client struct {
 	opts   clientOptions
-	target *Target
-	r      *resolver
+	target *Target   // 访问服务实例
+	r      *resolver // 服务地址-解析器
 	cc     *http.Client
 }
 
@@ -130,12 +138,12 @@ type Client struct {
 func NewClient(ctx context.Context, opts ...ClientOption) (*Client, error) {
 	options := clientOptions{
 		ctx:          ctx,
-		timeout:      500 * time.Millisecond,
+		timeout:      500 * time.Millisecond, // 注意，默认超时为500ms, 说明微服务接口响应要快，避免服务出现雪崩
 		encoder:      DefaultRequestEncoder,
 		decoder:      DefaultResponseDecoder,
 		errorDecoder: DefaultErrorDecoder,
 		transport:    http.DefaultTransport,
-		balancer:     random.New(),
+		balancer:     random.New(), // 随机均衡
 	}
 	for _, o := range opts {
 		o(&options)
@@ -145,8 +153,11 @@ func NewClient(ctx context.Context, opts ...ClientOption) (*Client, error) {
 		return nil, err
 	}
 	var r *resolver
+	// 有用到服务发现
 	if options.discovery != nil {
+		// 发现协议
 		if target.Scheme == "discovery" {
+			// 服务-解析器
 			if r, err = newResolver(ctx, options.discovery, target); err != nil {
 				return nil, fmt.Errorf("[http client] new resolver failed!err: %v", options.endpoint)
 			}
@@ -166,6 +177,8 @@ func NewClient(ctx context.Context, opts ...ClientOption) (*Client, error) {
 }
 
 // Invoke makes an rpc call procedure for remote service.
+// 发起rpc请求
+// method 是http method
 func (client *Client) Invoke(ctx context.Context, method, path string, args interface{}, reply interface{}, opts ...CallOption) error {
 	var (
 		contentType string
@@ -173,6 +186,7 @@ func (client *Client) Invoke(ctx context.Context, method, path string, args inte
 	)
 	c := defaultCallInfo(path)
 	for _, o := range opts {
+		// call请求发起之前，保存一些信息到CallInfo
 		if err := o.before(&c); err != nil {
 			return err
 		}
@@ -182,9 +196,11 @@ func (client *Client) Invoke(ctx context.Context, method, path string, args inte
 		if err != nil {
 			return err
 		}
+		// 保存contentType 解码用到
 		contentType = c.contentType
 		body = bytes.NewReader(data)
 	}
+	// 构造http请求
 	url := fmt.Sprintf("%s://%s%s", client.target.Scheme, client.target.Authority, path)
 	req, err := http.NewRequest(method, url, body)
 	if err != nil {
@@ -196,6 +212,7 @@ func (client *Client) Invoke(ctx context.Context, method, path string, args inte
 	if client.opts.userAgent != "" {
 		req.Header.Set("User-Agent", client.opts.userAgent)
 	}
+	// 客户端请求上下文, 包含Transport接口信息
 	ctx = transport.NewClientContext(ctx, &Transport{
 		endpoint:     client.opts.endpoint,
 		header:       headerCarrier(req.Header),
@@ -209,12 +226,15 @@ func (client *Client) Invoke(ctx context.Context, method, path string, args inte
 func (client *Client) invoke(ctx context.Context, req *http.Request, args interface{}, reply interface{}, c callInfo) error {
 	h := func(ctx context.Context, in interface{}) (interface{}, error) {
 		var done func(context.Context, balancer.DoneInfo)
+		// 服务解析器
 		if client.r != nil {
 			var (
-				err   error
-				node  *registry.ServiceInstance
+				err  error
+				node *registry.ServiceInstance
+				// 根据客户端target, 获取服务节点列表
 				nodes = client.r.fetch(ctx)
 			)
+			// 根据负载均衡策略，返回服务节点列表的中一个
 			if node, done, err = client.opts.balancer.Pick(ctx, nodes); err != nil {
 				return nil, errors.ServiceUnavailable("NODE_NOT_FOUND", err.Error())
 			}
@@ -227,6 +247,7 @@ func (client *Client) invoke(ctx context.Context, req *http.Request, args interf
 			req.URL.Host = addr
 		}
 		res, err := client.do(ctx, req, c)
+		// 有完成处理函数，就调用它
 		if done != nil {
 			done(ctx, balancer.DoneInfo{Err: err})
 		}
@@ -234,11 +255,13 @@ func (client *Client) invoke(ctx context.Context, req *http.Request, args interf
 			return nil, err
 		}
 		defer res.Body.Close()
+		// 编码请求结果
 		if err := client.opts.decoder(ctx, res, reply); err != nil {
 			return nil, err
 		}
 		return reply, nil
 	}
+	// 如果有中间件，进行处理
 	if len(client.opts.middleware) > 0 {
 		h = middleware.Chain(client.opts.middleware...)(h)
 	}
@@ -291,6 +314,7 @@ func DefaultResponseDecoder(ctx context.Context, res *http.Response, v interface
 
 // DefaultErrorDecoder is an HTTP error decoder.
 func DefaultErrorDecoder(ctx context.Context, res *http.Response) error {
+	// 正常
 	if res.StatusCode >= 200 && res.StatusCode <= 299 {
 		return nil
 	}

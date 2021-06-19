@@ -9,10 +9,11 @@ type AppInfo struct {
 	ID        string
 	Name      string
 	Version   string
-	Metadata  map[string]string
-	Endpoints []string
+	Metadata  map[string]string //元数据
+	Endpoints []string          // 端点
 }
 
+// 隐藏key, 0内存分配
 type appKey struct{}
 
 // NewContext returns a new Context that carries value.
